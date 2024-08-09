@@ -30,7 +30,7 @@ public class RedisAddressUtxoEntity extends RedisBlockAwareEntity {
     @Indexed
     private Integer outputIndex;
 
-    @NumericIndexed
+    @Indexed(sortable = true)
     private Long slot;
     private String blockHash;
     private Integer epoch;
@@ -61,5 +61,7 @@ public class RedisAddressUtxoEntity extends RedisBlockAwareEntity {
     private String spentAtBlockHash;
     private Long spentBlockTime;
     private Integer spentEpoch;
+
+    @Indexed
     private String spentTxHash;
 }

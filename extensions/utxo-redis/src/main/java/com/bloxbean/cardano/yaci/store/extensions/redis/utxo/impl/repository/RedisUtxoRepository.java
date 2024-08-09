@@ -15,7 +15,7 @@ public interface RedisUtxoRepository extends RedisDocumentRepository<RedisAddres
     // TODO Remove After Bug Fix https://github.com/redis/redis-om-spring/issues/399
     List<RedisAddressUtxoEntity> findByOwnerAddr(String ownerAddress);
 
-    Optional<List<RedisAddressUtxoEntity>> findByOwnerAddrAndSpentTxHashIsNull(String ownerAddress, Pageable page);
+    List<RedisAddressUtxoEntity> findByOwnerAddrAndSpentTxHashIsNull(String ownerAddress, Pageable page);
 
     // TODO Remove After Bug Fix https://github.com/redis/redis-om-spring/issues/399
     List<RedisAddressUtxoEntity> findByOwnerStakeAddr(String ownerStakeAddress);

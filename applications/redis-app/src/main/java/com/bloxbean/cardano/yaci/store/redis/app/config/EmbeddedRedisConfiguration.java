@@ -7,6 +7,7 @@ import com.bloxbean.cardano.yaci.store.utxo.storage.UtxoStorage;
 import com.bloxbean.cardano.yaci.store.utxo.storage.UtxoStorageReader;
 import com.bloxbean.cardano.yaci.store.utxo.storage.impl.UtxoCache;
 import com.redis.om.spring.annotations.EnableRedisDocumentRepositories;
+import com.redis.om.spring.search.stream.EntityStream;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -29,8 +30,8 @@ public class EmbeddedRedisConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public UtxoStorageReader utxoStorageReader(RedisUtxoRepository utxoRepository) {
-        return new RedisUtxoStorageReader(utxoRepository);
+    public UtxoStorageReader utxoStorageReader(RedisUtxoRepository utxoRepository, EntityStream entityStream) {
+        return new RedisUtxoStorageReader(utxoRepository, entityStream);
     }
 
 //    @Bean

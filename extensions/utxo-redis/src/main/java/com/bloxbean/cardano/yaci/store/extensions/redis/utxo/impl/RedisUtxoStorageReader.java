@@ -6,25 +6,31 @@ import com.bloxbean.cardano.yaci.store.common.domain.TxInput;
 import com.bloxbean.cardano.yaci.store.common.domain.UtxoKey;
 import com.bloxbean.cardano.yaci.store.common.model.Order;
 import com.bloxbean.cardano.yaci.store.extensions.redis.utxo.impl.mapper.RedisUtxoMapper;
+import com.bloxbean.cardano.yaci.store.extensions.redis.utxo.impl.model.RedisAddressUtxoEntity;
+import com.bloxbean.cardano.yaci.store.extensions.redis.utxo.impl.model.RedisAddressUtxoEntity$;
 import com.bloxbean.cardano.yaci.store.extensions.redis.utxo.impl.model.RedisBlockAwareEntity;
 import com.bloxbean.cardano.yaci.store.extensions.redis.utxo.impl.repository.RedisUtxoRepository;
 import com.bloxbean.cardano.yaci.store.utxo.storage.UtxoStorageReader;
+import com.redis.om.spring.search.stream.EntityStream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import redis.clients.jedis.search.aggr.SortedField;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 public class RedisUtxoStorageReader implements UtxoStorageReader {
 
     private final RedisUtxoRepository redisUtxoRepository;
+    private final EntityStream entityStream;
     private final RedisUtxoMapper mapper = RedisUtxoMapper.INSTANCE;
 
     @Override
@@ -35,23 +41,11 @@ public class RedisUtxoStorageReader implements UtxoStorageReader {
 
     @Override
     public List<AddressUtxo> findUtxoByAddress(@NonNull String address, int page, int count, Order order) {
-        Pageable pageable = PageRequest.of(page, count)
-                .withSort(order.equals(Order.desc) ? Sort.Direction.DESC : Sort.Direction.ASC, "slot", "txHash", "outputIndex");
-        List<AddressUtxo> utxosByAddress = new ArrayList<>(redisUtxoRepository.findByOwnerAddr(address)
-                .stream()
-                .filter(redisAddressUtxoEntity -> StringUtils.isBlank(redisAddressUtxoEntity.getSpentTxHash()))
+        return entityStream.of(RedisAddressUtxoEntity.class)
+                .filter(RedisAddressUtxoEntity$.SPENT_TX_HASH.eq(null))
+                .sorted(RedisAddressUtxoEntity$.BLOCK_TIME, order.equals(Order.asc) ? SortedField.SortOrder.ASC : SortedField.SortOrder.DESC)
                 .map(mapper::toAddressUtxo)
-                .toList());
-        Comparator<AddressUtxo> comparator;
-        if (order.equals(Order.asc)) {
-            comparator = Comparator.comparing(AddressUtxo::getBlockTime);
-        } else {
-            comparator = Comparator.comparing(AddressUtxo::getBlockTime).reversed();
-        }
-        utxosByAddress.sort(comparator);
-        int start = (int) pageable.getOffset();
-        int end = Math.min((start + pageable.getPageSize()), utxosByAddress.size());
-        return utxosByAddress.subList(start, end);
+                .collect(Collectors.toList());
     }
 
     @Override
