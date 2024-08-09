@@ -109,4 +109,46 @@ public class GovernanceStoreConfiguration {
                                                                        DRepRegistrationMapper drepRegistrationMapper) {
         return new DRepRegistrationStorageReaderImpl(drepRegistrationRepository, drepRegistrationMapper);
     }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CommitteeMemberStorage committeeMemberStorage(CommitteeMemberRepository committeeMemberRepository,
+                                                         CommitteeMemberMapper committeeMemberMapper) {
+        return new CommitteeMemberStorageImpl(committeeMemberRepository, committeeMemberMapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CommitteeMemberStorageReader committeeMemberStorageReader(CommitteeMemberRepository committeeMemberRepository,
+                                                                     CommitteeMemberMapper committeeMemberMapper) {
+        return new CommitteeMemberStorageReaderImpl(committeeMemberRepository, committeeMemberMapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ConstitutionStorage constitutionStorage(ConstitutionRepository constitutionRepository,
+                                                   ConstitutionMapper constitutionMapper) {
+        return new ConstitutionStorageImpl(constitutionRepository, constitutionMapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ConstitutionStorageReader constitutionStorageReader(ConstitutionRepository constitutionRepository,
+                                                               ConstitutionMapper constitutionMapper) {
+        return new ConstitutionStorageReaderImpl(constitutionRepository, constitutionMapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CommitteeStorage committeeStorage(CommitteeRepository committeeRepository,
+                                             CommitteeMapper committeeMapper) {
+        return new CommitteeStorageImpl(committeeRepository, committeeMapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CommitteeStorageReader committeeStorageReader(CommitteeRepository committeeRepository,
+                                                         CommitteeMapper committeeMapper) {
+        return new CommitteeStorageReaderImpl(committeeRepository, committeeMapper);
+    }
 }

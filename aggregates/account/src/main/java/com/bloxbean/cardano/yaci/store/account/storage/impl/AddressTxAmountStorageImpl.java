@@ -1,36 +1,34 @@
 package com.bloxbean.cardano.yaci.store.account.storage.impl;
 
-import com.bloxbean.cardano.yaci.store.account.AccountStoreProperties;
 import com.bloxbean.cardano.yaci.store.account.domain.AddressTxAmount;
 import com.bloxbean.cardano.yaci.store.account.storage.AddressTxAmountStorage;
 import com.bloxbean.cardano.yaci.store.account.storage.impl.mapper.AggrMapper;
 import com.bloxbean.cardano.yaci.store.account.storage.impl.model.AddressTxAmountEntity;
 import com.bloxbean.cardano.yaci.store.account.storage.impl.repository.AddressTxAmountRepository;
+import com.bloxbean.cardano.yaci.store.common.config.StoreProperties;
 import com.bloxbean.cardano.yaci.store.common.util.ListUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
-import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 import static com.bloxbean.cardano.yaci.store.account.jooq.tables.AddressTxAmount.ADDRESS_TX_AMOUNT;
 
-@Component
 @RequiredArgsConstructor
 @Slf4j
 public class AddressTxAmountStorageImpl implements AddressTxAmountStorage {
     private final AddressTxAmountRepository addressTxAmountRepository;
     private final DSLContext dsl;
-    private final AccountStoreProperties accountStoreProperties;
+    private final StoreProperties storeProperties;
 
     private final AggrMapper aggrMapper = AggrMapper.INSTANCE;
 
     @PostConstruct
     public void postConstruct() {
-        this.dsl.settings().setBatchSize(accountStoreProperties.getJooqWriteBatchSize());
+        this.dsl.settings().setBatchSize(storeProperties.getJooqWriteBatchSize());
     }
 
     @Override
@@ -40,11 +38,10 @@ public class AddressTxAmountStorageImpl implements AddressTxAmountStorage {
                 .map(addressTxAmount1 -> aggrMapper.toAddressTxAmountEntity(addressTxAmount1))
                 .toList();
 
-        if (accountStoreProperties.isParallelWrite()
-                && addressTxAmtEntities.size() > accountStoreProperties.getWriteThreadDefaultBatchSize()) {
+        if (storeProperties.isParallelWrite()
+                && addressTxAmtEntities.size() > storeProperties.getWriteThreadDefaultBatchSize()) {
             int partitionSize = getPartitionSize(addressTxAmtEntities.size());
-            log.info("\tPartition address_tx_amount size : {}", partitionSize);
-            ListUtil.partitionAndApplyInParallel(addressTxAmtEntities, partitionSize, this::saveBatch);
+            ListUtil.partitionAndApply(addressTxAmtEntities, partitionSize, this::saveBatch);
         } else {
             saveBatch(addressTxAmtEntities);
         }
@@ -108,11 +105,13 @@ public class AddressTxAmountStorageImpl implements AddressTxAmountStorage {
 
     private int getPartitionSize(int totalSize) {
         int partitionSize = totalSize;
-        if (totalSize > accountStoreProperties.getWriteThreadDefaultBatchSize()) {
-            partitionSize = totalSize / accountStoreProperties.getWriteThreadCount();
-            log.info("\tAddress Tx Amt Partition size : {}", partitionSize);
+        if (totalSize > storeProperties.getWriteThreadDefaultBatchSize()) {
+            partitionSize = totalSize / storeProperties.getWriteThreadCount();
+            if (log.isDebugEnabled())
+                log.debug("\tAddress Tx Amt Partition size : {}", partitionSize);
         } else {
-            log.info("\tAddress Tx Amt Partition size : {}", partitionSize);
+            if (log.isDebugEnabled())
+                log.debug("\tAddress Tx Amt Partition size : {}", partitionSize);
         }
         return partitionSize;
     }

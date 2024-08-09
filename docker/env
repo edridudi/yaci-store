@@ -1,0 +1,4 @@
+# Common env file
+
+# Java Options
+# JDK_JAVA_OPTIONS=-Xms4G -Xmx12G

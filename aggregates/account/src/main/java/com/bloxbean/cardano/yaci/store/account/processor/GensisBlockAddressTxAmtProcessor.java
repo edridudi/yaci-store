@@ -2,7 +2,7 @@ package com.bloxbean.cardano.yaci.store.account.processor;
 
 import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.address.AddressProvider;
-import com.bloxbean.cardano.yaci.core.util.HexUtil;
+import com.bloxbean.cardano.yaci.store.account.AccountStoreProperties;
 import com.bloxbean.cardano.yaci.store.account.domain.AddressTxAmount;
 import com.bloxbean.cardano.yaci.store.account.storage.AddressTxAmountStorage;
 import com.bloxbean.cardano.yaci.store.events.GenesisBlockEvent;
@@ -17,17 +17,21 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static com.bloxbean.cardano.yaci.core.util.Constants.LOVELACE;
-import static com.bloxbean.cardano.yaci.store.account.util.AddressUtil.getAddress;
+import static com.bloxbean.cardano.yaci.store.common.util.AddressUtil.getAddress;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class GensisBlockAddressTxAmtProcessor {
     private final AddressTxAmountStorage addressTxAmountStorage;
+    private final AccountStoreProperties accountStoreProperties;
 
     @EventListener
     @Transactional
     public void handleAddressTxAmtForGenesisBlock(GenesisBlockEvent genesisBlockEvent) {
+        if (!accountStoreProperties.isSaveAddressTxAmount())
+            return;
+
         var genesisBalances = genesisBlockEvent.getGenesisBalances();
         if (genesisBalances == null || genesisBalances.isEmpty()) {
             log.info("No genesis balances found");
@@ -40,21 +44,19 @@ public class GensisBlockAddressTxAmtProcessor {
             var txnHash = genesisBalance.getTxnHash();
             var balance = genesisBalance.getBalance();
 
-            if (balance == null || balance.compareTo(BigInteger.ZERO) == 0) {
+            if (balance == null ||
+                    (!accountStoreProperties.isAddressTxAmountIncludeZeroAmount() && balance.compareTo(BigInteger.ZERO) == 0)) {
                 continue;
             }
 
             //address and full address if the address is too long
             var addressTuple = getAddress(receiverAddress);
 
-            String ownerPaymentCredential = null;
             String stakeAddress = null;
             if (genesisBalance.getAddress() != null &&
                     genesisBalance.getAddress().startsWith("addr")) { //If shelley address
                 try {
                     Address address = new Address(genesisBalance.getAddress());
-                    ownerPaymentCredential = address.getPaymentCredential().map(paymentKeyHash -> HexUtil.encodeHexString(paymentKeyHash.getBytes()))
-                            .orElse(null);
                     stakeAddress = address.getDelegationCredential().map(delegationHash -> AddressProvider.getStakeAddress(address).toBech32())
                             .orElse(null);
                 } catch (Exception e) {
@@ -80,6 +82,7 @@ public class GensisBlockAddressTxAmtProcessor {
         if (genesisAddressTxAmtList.size() > 0) {
             addressTxAmountStorage.save(genesisAddressTxAmtList);
         }
+
     }
 
 }

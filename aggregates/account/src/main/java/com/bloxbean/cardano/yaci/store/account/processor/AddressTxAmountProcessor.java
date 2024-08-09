@@ -1,5 +1,6 @@
 package com.bloxbean.cardano.yaci.store.account.processor;
 
+import com.bloxbean.cardano.yaci.store.account.AccountStoreProperties;
 import com.bloxbean.cardano.yaci.store.account.domain.AddressTxAmount;
 import com.bloxbean.cardano.yaci.store.account.storage.AddressTxAmountStorage;
 import com.bloxbean.cardano.yaci.store.client.utxo.UtxoClient;
@@ -11,8 +12,9 @@ import com.bloxbean.cardano.yaci.store.events.RollbackEvent;
 import com.bloxbean.cardano.yaci.store.events.internal.ReadyForBalanceAggregationEvent;
 import com.bloxbean.cardano.yaci.store.utxo.domain.AddressUtxoEvent;
 import com.bloxbean.cardano.yaci.store.utxo.domain.TxInputOutput;
-import lombok.RequiredArgsConstructor;
+import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.event.EventListener;
 import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Component;
@@ -21,23 +23,38 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigInteger;
 import java.util.*;
 
-import static com.bloxbean.cardano.yaci.store.account.util.AddressUtil.getAddress;
+import static com.bloxbean.cardano.yaci.core.util.Constants.LOVELACE;
+import static com.bloxbean.cardano.yaci.store.common.util.AddressUtil.getAddress;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class AddressTxAmountProcessor {
     public static final int BLOCK_ADDRESS_TX_AMT_THRESHOLD = 100; //Threshold to save address_tx_amounts records for block
 
     private final AddressTxAmountStorage addressTxAmountStorage;
     private final UtxoClient utxoClient;
+    private final UtxoClient retryableUtxoClient;
+    private final AccountStoreProperties accountStoreProperties;
 
     private List<Pair<EventMetadata, TxInputOutput>> pendingTxInputOutputListCache = Collections.synchronizedList(new ArrayList<>());
     private List<AddressTxAmount> addressTxAmountListCache = Collections.synchronizedList(new ArrayList<>());
 
+    public AddressTxAmountProcessor(AddressTxAmountStorage addressTxAmountStorage,
+                                    UtxoClient utxoClient,
+                                    @Qualifier("retryableUtxoClient") UtxoClient retryableUtxoClient,
+                                    AccountStoreProperties accountStoreProperties) {
+        this.addressTxAmountStorage = addressTxAmountStorage;
+        this.utxoClient = utxoClient;
+        this.retryableUtxoClient = retryableUtxoClient;
+        this.accountStoreProperties = accountStoreProperties;
+    }
+
     @EventListener
     @Transactional
     public void processAddressUtxoEvent(AddressUtxoEvent addressUtxoEvent) {
+        if (!accountStoreProperties.isSaveAddressTxAmount())
+            return;
+
         //Ignore Genesis Txs as it's handled by GEnesisBlockAddressTxAmtProcessor
         if (addressUtxoEvent.getEventMetadata().getSlot() == -1)
             return;
@@ -60,10 +77,11 @@ public class AddressTxAmountProcessor {
                 log.debug("Saving address_tx_amounts records : {} -- {}", addressTxAmountList.size(), addressUtxoEvent.getEventMetadata().getBlock());
             addressTxAmountStorage.save(addressTxAmountList); //Save
         } else if (addressTxAmountList.size() > 0) {
-           addressTxAmountListCache.addAll(addressTxAmountList);
+            addressTxAmountListCache.addAll(addressTxAmountList);
         }
     }
 
+    @SneakyThrows
     private List<AddressTxAmount> processAddressAmountForTx(EventMetadata metadata, TxInputOutput txInputOutput,
                                                             boolean throwExceptionOnFailure) {
         var txHash = txInputOutput.getTxHash();
@@ -76,10 +94,18 @@ public class AddressTxAmountProcessor {
                 .map(input -> new UtxoKey(input.getTxHash(), input.getOutputIndex()))
                 .toList();
 
-        var inputAddressUtxos = utxoClient.getUtxosByIds(inputUtxoKeys)
-                .stream()
-                .filter(Objects::nonNull)
-                .toList();
+        List<AddressUtxo> inputAddressUtxos;
+        if (throwExceptionOnFailure) {
+            inputAddressUtxos = retryableUtxoClient.getUtxosByIds(inputUtxoKeys)
+                    .stream()
+                    .filter(Objects::nonNull)
+                    .toList();
+        } else {
+            inputAddressUtxos = utxoClient.getUtxosByIds(inputUtxoKeys)
+                    .stream()
+                    .filter(Objects::nonNull)
+                    .toList();
+        }
 
         if (inputAddressUtxos.size() != inputUtxoKeys.size()) {
             log.debug("Unable to get inputs for all input keys for account balance calculation. Add this Tx to cache to process later : " + txHash);
@@ -135,10 +161,12 @@ public class AddressTxAmountProcessor {
 
         return (List<AddressTxAmount>) addressTxAmountMap.entrySet()
                 .stream()
-                .filter(entry -> entry.getValue().compareTo(BigInteger.ZERO) != 0)
+                .filter(entry -> (accountStoreProperties.isAddressTxAmountIncludeZeroAmount() &&
+                        accountStoreProperties.isAddressTxAmountExcludeTokenZeroAmount() && entry.getKey().getSecond().equals(LOVELACE))
+                        || (accountStoreProperties.isAddressTxAmountIncludeZeroAmount() && !accountStoreProperties.isAddressTxAmountExcludeTokenZeroAmount())
+                        || entry.getValue().compareTo(BigInteger.ZERO) != 0)
                 .map(entry -> {
                     var addressDetails = addressToAddressDetailsMap.get(entry.getKey().getFirst());
-                    var assetDetails = unitToAssetDetailsMap.get(entry.getKey().getSecond());
 
                     //address and full address if the address is too long
                     var addressTuple = getAddress(entry.getKey().getFirst());
@@ -160,6 +188,9 @@ public class AddressTxAmountProcessor {
     @EventListener
     @Transactional //We can also listen to CommitEvent here
     public void handleRemainingTxInputOuputs(ReadyForBalanceAggregationEvent readyForBalanceAggregationEvent) {
+        if (!accountStoreProperties.isSaveAddressTxAmount())
+            return;
+
         try {
             List<AddressTxAmount> addressTxAmountList = new ArrayList<>();
             for (var pair : pendingTxInputOutputListCache) {
@@ -183,8 +214,8 @@ public class AddressTxAmountProcessor {
             }
 
             long t2 = System.currentTimeMillis();
-            log.info("Time taken to save additional address_tx_amounts records : {}, time: {} ms", addressTxAmountListCache.size(),  (t2 - t1));
-
+            log.info("Time taken to save additional address_tx_amounts records : {}, time: {} ms",
+                    addressTxAmountListCache.size(), (t2 - t1));
         } finally {
             pendingTxInputOutputListCache.clear();
             addressTxAmountListCache.clear();

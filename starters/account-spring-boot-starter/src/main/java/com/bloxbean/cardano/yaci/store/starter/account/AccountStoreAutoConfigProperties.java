@@ -22,14 +22,32 @@ public class AccountStoreAutoConfigProperties {
         private int maxBalanceRecordsPerAddressPerBatch = 3;
         private boolean stakeAddressBalanceEnabled = true;
 
-        //parallel write & batch size settings
-        private boolean parallelWrite = false;
-        private int writeThreadDefaultBatchSize = 6000;
-        private int jooqWriteBatchSize = 3000;
-        private int writeThreadCount = 5;
-
         private int balanceHistoryCleanupInterval = 300;
         private long balanceCleanupSlotCount = 43200; //2160 blocks
+        private long balanceCleanupBatchThreshold = 20000;
+
+        private boolean saveAddressTxAmount = false;
+        private boolean addressTxAmountIncludeZeroAmount = false;
+        private boolean addressTxAmountExcludeZeroTokenAmount = true;
+
+        private long initialBalanceSnapshotBlock;
+
+        private int balanceCalcJobBatchSize = 1000;
+        private int balanceCalcJobPartitionSize = 10;
+        private String balanceCalcBatchMode = "tx-amount";
+
+        /**
+         * Enable Address Balance and Stake Address Balance Pruning (History records)
+         */
+        private boolean pruningEnabled = false;
+        /**
+         * Pruning batch size
+         */
+        private int pruningBatchSize = 3000;
+        /**
+         * Pruning interval in seconds
+         */
+        private int pruningInterval = 86400;
     }
 
 }

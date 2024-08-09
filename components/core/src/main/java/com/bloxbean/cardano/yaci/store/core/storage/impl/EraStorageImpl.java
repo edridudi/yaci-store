@@ -31,4 +31,11 @@ public class EraStorageImpl implements EraStorage {
         return eraRepository.findFirstNonByronEra()
                 .map(eraMapper::toEra);
     }
+
+    @Override
+    public Optional<CardanoEra> findCurrentEra() {
+        return eraRepository.findCurrentEra()
+                .map(eraEntity -> eraMapper.toEra(eraEntity));
+    }
+
 }

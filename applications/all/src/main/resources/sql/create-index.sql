@@ -7,10 +7,10 @@ CREATE INDEX if not exists idx_transaction_block
 CREATE INDEX if not exists idx_transaction_block_hash
     ON transaction(block_hash);
 
-CREATE INDEX idx_withdrawal_address
+CREATE INDEX if not exists idx_withdrawal_address
     ON withdrawal(address);
 
-CREATE INDEX idx_withdrawal_tx_hash
+CREATE INDEX if not exists idx_withdrawal_tx_hash
     ON withdrawal(tx_hash);
 
 -- utxo store
@@ -29,6 +29,7 @@ CREATE INDEX if not exists idx_address_utxo_owner_stakekey_hash
 
 CREATE INDEX if not exists idx_address_utxo_epoch
     ON address_utxo(epoch);
+
 
 -- asset store
 
@@ -61,16 +62,6 @@ CREATE INDEX if not exists idx_address_balance_epoch
 CREATE INDEX if not exists idx_address_balance_unit
     ON address_balance (unit);
 
-CREATE INDEX if not exists idx_address_balance_policy
-    ON address_balance (policy);
-
-CREATE INDEX if not exists idx_address_balance_policy_asset
-    ON address_balance (policy, asset_name);
-
--- address
-
-CREATE INDEX if not exists idx_address_stake_address
-    ON address (stake_address);
 
 -- stake address balance
 
@@ -101,3 +92,27 @@ CREATE INDEX if not exists idx_txn_metadata_label
 CREATE INDEX if not exists idx_txn_scripts_tx_hash
     ON transaction_scripts (tx_hash);
 
+-- governance
+CREATE INDEX idx_gov_action_proposal_txhash
+    ON gov_action_proposal (tx_hash);
+
+CREATE INDEX idx_gov_action_proposal_return_address
+    ON gov_action_proposal (return_address);
+
+CREATE INDEX idx_gov_action_proposal_type
+    ON gov_action_proposal (type);
+
+CREATE INDEX idx_voting_procedure_txhash
+    ON voting_procedure (tx_hash);
+
+CREATE INDEX idx_voting_procedure_gov_action_tx_hash
+    ON voting_procedure (gov_action_tx_hash);
+
+CREATE INDEX idx_voting_procedure_gov_action_tx_hash_gov_action_index
+    ON voting_procedure (gov_action_tx_hash, gov_action_index);
+
+CREATE INDEX idx_delegation_vote_address
+    ON delegation_vote (address);
+
+CREATE INDEX idx_delegation_vote_drep_id
+    ON delegation_vote (drep_id);

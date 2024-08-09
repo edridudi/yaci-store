@@ -9,51 +9,54 @@ import com.bloxbean.cardano.yaci.store.account.storage.impl.model.AddressBalance
 import com.bloxbean.cardano.yaci.store.account.storage.impl.model.StakeAddressBalanceEntity;
 import com.bloxbean.cardano.yaci.store.account.storage.impl.repository.AddressBalanceRepository;
 import com.bloxbean.cardano.yaci.store.account.storage.impl.repository.StakeBalanceRepository;
+import com.bloxbean.cardano.yaci.store.common.config.StoreProperties;
 import com.bloxbean.cardano.yaci.store.common.model.Order;
 import com.bloxbean.cardano.yaci.store.common.util.ListUtil;
+import com.bloxbean.cardano.yaci.store.events.internal.CommitEvent;
 import jakarta.annotation.PostConstruct;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
+import org.springframework.data.util.Pair;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
-import static com.bloxbean.cardano.yaci.store.account.jooq.Tables.*;
-import static com.bloxbean.cardano.yaci.store.account.util.AddressUtil.getAddress;
+import static com.bloxbean.cardano.yaci.store.account.jooq.Tables.ADDRESS_BALANCE;
+import static com.bloxbean.cardano.yaci.store.account.jooq.Tables.STAKE_ADDRESS_BALANCE;
 
 @RequiredArgsConstructor
 @Slf4j
 public class AccountBalanceStorageImpl implements AccountBalanceStorage {
     private final AddressBalanceRepository addressBalanceRepository;
     private final StakeBalanceRepository stakeBalanceRepository;
-    private final AccountMapper mapper = AccountMapper.INSTANCE;
     private final DSLContext dsl;
-
+    private final StoreProperties storeProperties;
     private final AccountStoreProperties accountStoreProperties;
-    private final PlatformTransactionManager transactionManager;
 
-    private TransactionTemplate transactionTemplate;
+    private final AccountMapper mapper = AccountMapper.INSTANCE;
 
     @Value("${store.account.enable-jpa-insert:false}")
     private boolean enableJPAInsert = false;
 
+    private Map<Pair<String, String>, Long> addressBalanceKeysToDeleteCache = new ConcurrentHashMap<>();
+    private Map<String, Long> stakeBalanceKeysToDeleteCache = new ConcurrentHashMap<>();
+
     @PostConstruct
     public void postConstruct() {
-        this.dsl.settings().setBatchSize(accountStoreProperties.getJooqWriteBatchSize());
-
-        transactionTemplate = new TransactionTemplate(transactionManager);
-        transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.dsl.settings().setBatchSize(storeProperties.getJooqWriteBatchSize());
     }
 
     @Override
@@ -83,18 +86,16 @@ public class AccountBalanceStorageImpl implements AccountBalanceStorage {
         List<AddressBalanceEntity> entities = addressBalances.stream().map(mapper::toAddressBalanceEntity)
                 .toList();
 
-        if (accountStoreProperties.isParallelWrite()) {
-            log.info("\tWriting address balances in parallel. Using {}, Per Thread Batch size : {} ", enableJPAInsert ? "JPA" : "JOOQ", accountStoreProperties.getWriteThreadDefaultBatchSize());
+        if (storeProperties.isParallelWrite()) {
+            log.info("\tWriting address balances in parallel. Using {}, Per Thread Batch size : {} ", enableJPAInsert ? "JPA" : "JOOQ", storeProperties.getWriteThreadDefaultBatchSize());
             if (!enableJPAInsert)
-                log.info("\tInsert Batch Size -- {}", accountStoreProperties.getJooqWriteBatchSize());
+                log.info("\tInsert Batch Size -- {}", storeProperties.getJooqWriteBatchSize());
 
             int partitionSize = getPartitionSize(entities.size());
-            ListUtil.partitionAndApplyInParallel(entities, partitionSize, this::saveAddrBalanceBatch);
+            ListUtil.partitionAndApply(entities, partitionSize, this::saveAddrBalanceBatch);
         } else {
             saveAddrBalanceBatch(entities);
         }
-
-        saveAddressBatch(addressBalances);
     }
 
     private void saveAddrBalanceBatch(List<AddressBalanceEntity> addressBalanceEntities) {
@@ -102,71 +103,38 @@ public class AccountBalanceStorageImpl implements AccountBalanceStorage {
             if (log.isTraceEnabled())
                 log.trace("Inserting address balances using JPA batch");
 
-            transactionTemplate.execute(status -> {
-                addressBalanceRepository.saveAll(addressBalanceEntities);
-                return null;
-            });
+            addressBalanceRepository.saveAll(addressBalanceEntities);
         } else {
             if (log.isTraceEnabled())
                 log.trace("Inserting address balances using JOOQ batch");
 
-            transactionTemplate.execute(status -> {
-                saveAddrBalanceBatchJOOQ(addressBalanceEntities);
-                return null;
-            });
+            saveAddrBalanceBatchJOOQ(addressBalanceEntities);
         }
     }
 
     private void saveAddrBalanceBatchJOOQ(List<AddressBalanceEntity> addressBalanceEntities) {
         LocalDateTime localDateTime = LocalDateTime.now();
 
-        dsl.batched(c -> {
-            for (var addressBalance : addressBalanceEntities) {
-                c.dsl().insertInto(ADDRESS_BALANCE)
-                        .set(ADDRESS_BALANCE.ADDRESS, addressBalance.getAddress())
-                        .set(ADDRESS_BALANCE.UNIT, addressBalance.getUnit())
-                        .set(ADDRESS_BALANCE.SLOT, addressBalance.getSlot())
-                        .set(ADDRESS_BALANCE.QUANTITY, addressBalance.getQuantity())
-                        .set(ADDRESS_BALANCE.ADDR_FULL, addressBalance.getAddrFull())
-                        .set(ADDRESS_BALANCE.POLICY, addressBalance.getPolicy())
-                        .set(ADDRESS_BALANCE.ASSET_NAME, addressBalance.getAssetName())
-                        .set(ADDRESS_BALANCE.BLOCK_HASH, addressBalance.getBlockHash())
-                        .set(ADDRESS_BALANCE.BLOCK, addressBalance.getBlockNumber())
-                        .set(ADDRESS_BALANCE.BLOCK_TIME, addressBalance.getBlockTime())
-                        .set(ADDRESS_BALANCE.EPOCH, addressBalance.getEpoch())
-                        .set(ADDRESS_BALANCE.UPDATE_DATETIME, localDateTime)
-                        .onDuplicateKeyUpdate()
-                        .set(ADDRESS_BALANCE.QUANTITY, addressBalance.getQuantity())
-                        .set(ADDRESS_BALANCE.ADDR_FULL, addressBalance.getAddrFull())
-                        .set(ADDRESS_BALANCE.POLICY, addressBalance.getPolicy())
-                        .set(ADDRESS_BALANCE.ASSET_NAME, addressBalance.getAssetName())
-                        .set(ADDRESS_BALANCE.BLOCK_HASH, addressBalance.getBlockHash())
-                        .set(ADDRESS_BALANCE.BLOCK, addressBalance.getBlockNumber())
-                        .set(ADDRESS_BALANCE.BLOCK_TIME, addressBalance.getBlockTime())
-                        .set(ADDRESS_BALANCE.EPOCH, addressBalance.getEpoch())
-                        .set(ADDRESS_BALANCE.UPDATE_DATETIME, localDateTime)
-                        .execute();
-            }
-        });
-    }
+        var inserts = addressBalanceEntities.stream()
+                .map(addressBalance ->   dsl.insertInto(ADDRESS_BALANCE)
+                                .set(ADDRESS_BALANCE.ADDRESS, addressBalance.getAddress())
+                                .set(ADDRESS_BALANCE.UNIT, addressBalance.getUnit())
+                                .set(ADDRESS_BALANCE.SLOT, addressBalance.getSlot())
+                                .set(ADDRESS_BALANCE.QUANTITY, addressBalance.getQuantity())
+                                .set(ADDRESS_BALANCE.ADDR_FULL, addressBalance.getAddrFull())
+                                .set(ADDRESS_BALANCE.BLOCK, addressBalance.getBlockNumber())
+                                .set(ADDRESS_BALANCE.BLOCK_TIME, addressBalance.getBlockTime())
+                                .set(ADDRESS_BALANCE.EPOCH, addressBalance.getEpoch())
+                                .set(ADDRESS_BALANCE.UPDATE_DATETIME, localDateTime)
+                                .onDuplicateKeyUpdate()
+                                .set(ADDRESS_BALANCE.QUANTITY, addressBalance.getQuantity())
+                                .set(ADDRESS_BALANCE.ADDR_FULL, addressBalance.getAddrFull())
+                                .set(ADDRESS_BALANCE.BLOCK, addressBalance.getBlockNumber())
+                                .set(ADDRESS_BALANCE.BLOCK_TIME, addressBalance.getBlockTime())
+                                .set(ADDRESS_BALANCE.EPOCH, addressBalance.getEpoch())
+                                .set(ADDRESS_BALANCE.UPDATE_DATETIME, localDateTime)).toList();
 
-    private void saveAddressBatch(List<AddressBalance> addressBalances) {
-        LocalDateTime localDateTime = LocalDateTime.now();
-
-        dsl.batched(c -> {
-            for (var addressBalance : addressBalances) {
-                var addressTuple = getAddress(addressBalance.getAddress());
-
-                c.dsl().insertInto(ADDRESS)
-                        .set(ADDRESS.ADDRESS_, addressTuple._1)
-                        .set(ADDRESS.ADDR_FULL, addressTuple._2)
-                        .set(ADDRESS.STAKE_ADDRESS, addressBalance.getStakeAddress())
-                        .set(ADDRESS.PAYMENT_CREDENTIAL, addressBalance.getPaymentCredential())
-                        .set(ADDRESS.UPDATE_DATETIME, localDateTime)
-                        .onDuplicateKeyIgnore()
-                        .execute();
-            }
-        });
+        dsl.batch(inserts).execute();
     }
 
     @Transactional
@@ -175,6 +143,22 @@ public class AccountBalanceStorageImpl implements AccountBalanceStorage {
         //Find the latest address balance before the slot and delete all address balances before that
         return addressBalanceRepository.findTopByAddressAndUnitAndSlotIsLessThanEqualOrderBySlotDesc(address, unit, slot)
                 .map(addressBalanceEntity -> addressBalanceRepository.deleteAllBeforeSlot(address, unit, addressBalanceEntity.getSlot() - 1)).orElse(0);
+    }
+
+    @Transactional
+    @Override
+    public int deleteAddressBalanceBeforeSlotExceptTop(List<Pair<String, String>> addresses, long slot) {
+        //Add to cache and delete once the cache size reaches a threshold
+        addresses.forEach(addressUnit -> {
+            addressBalanceKeysToDeleteCache.put(addressUnit, slot);
+        });
+
+        return 0;
+    }
+
+    @Override
+    public boolean isBatchDeleteSupported() {
+        return true;
     }
 
     @Transactional
@@ -216,9 +200,9 @@ public class AccountBalanceStorageImpl implements AccountBalanceStorage {
         List<StakeAddressBalanceEntity> entities = stakeBalances.stream().map(mapper::toStakeBalanceEntity)
                 .toList();
 
-        if (accountStoreProperties.isParallelWrite()) {
+        if (storeProperties.isParallelWrite()) {
             int partitionSize = getPartitionSize(entities.size());
-            ListUtil.partitionAndApplyInParallel(entities, partitionSize, this::saveStakeBalanceBatch);
+            ListUtil.partitionAndApply(entities, partitionSize, this::saveStakeBalanceBatch);
         } else {
             saveStakeBalanceBatch(entities);
         }
@@ -229,46 +213,36 @@ public class AccountBalanceStorageImpl implements AccountBalanceStorage {
             if (log.isTraceEnabled())
                 log.trace("\tInserting stake address balances using JPA batch");
 
-            transactionTemplate.execute(status -> {
-                stakeBalanceRepository.saveAll(stakeAddressBalances);
-                return null;
-            });
+            stakeBalanceRepository.saveAll(stakeAddressBalances);
         } else {
             if (log.isTraceEnabled())
                 log.trace("\tInserting stake address balances using JOOQ batch");
 
-            transactionTemplate.execute(status -> {
-                saveStakeBalanceBatchJOOQ(stakeAddressBalances);
-                return null;
-            });
+            saveStakeBalanceBatchJOOQ(stakeAddressBalances);
         }
     }
 
     private void saveStakeBalanceBatchJOOQ(List<StakeAddressBalanceEntity> stakeAddressBalances) {
         LocalDateTime localDateTime = LocalDateTime.now();
-        dsl.batched(c -> {
-            for (var stakeAddrBalance : stakeAddressBalances) {
-                c.dsl().insertInto(STAKE_ADDRESS_BALANCE)
-                        .set(STAKE_ADDRESS_BALANCE.ADDRESS, stakeAddrBalance.getAddress())
-                        .set(STAKE_ADDRESS_BALANCE.SLOT, stakeAddrBalance.getSlot())
-                        .set(STAKE_ADDRESS_BALANCE.QUANTITY, stakeAddrBalance.getQuantity())
-                        .set(STAKE_ADDRESS_BALANCE.STAKE_CREDENTIAL, stakeAddrBalance.getStakeCredential())
-                        .set(STAKE_ADDRESS_BALANCE.BLOCK_HASH, stakeAddrBalance.getBlockHash())
-                        .set(STAKE_ADDRESS_BALANCE.BLOCK, stakeAddrBalance.getBlockNumber())
-                        .set(STAKE_ADDRESS_BALANCE.BLOCK_TIME, stakeAddrBalance.getBlockTime())
-                        .set(STAKE_ADDRESS_BALANCE.EPOCH, stakeAddrBalance.getEpoch())
-                        .set(STAKE_ADDRESS_BALANCE.UPDATE_DATETIME, localDateTime)
-                        .onDuplicateKeyUpdate()
-                        .set(STAKE_ADDRESS_BALANCE.QUANTITY, stakeAddrBalance.getQuantity())
-                        .set(STAKE_ADDRESS_BALANCE.STAKE_CREDENTIAL, stakeAddrBalance.getStakeCredential())
-                        .set(STAKE_ADDRESS_BALANCE.BLOCK_HASH, stakeAddrBalance.getBlockHash())
-                        .set(STAKE_ADDRESS_BALANCE.BLOCK, stakeAddrBalance.getBlockNumber())
-                        .set(STAKE_ADDRESS_BALANCE.BLOCK_TIME, stakeAddrBalance.getBlockTime())
-                        .set(STAKE_ADDRESS_BALANCE.EPOCH, stakeAddrBalance.getEpoch())
-                        .set(STAKE_ADDRESS_BALANCE.UPDATE_DATETIME, localDateTime)
-                        .execute();
-            }
-        });
+
+        var inserts = stakeAddressBalances.stream()
+                        .map(stakeAddrBalance -> dsl.insertInto(STAKE_ADDRESS_BALANCE)
+                                .set(STAKE_ADDRESS_BALANCE.ADDRESS, stakeAddrBalance.getAddress())
+                                .set(STAKE_ADDRESS_BALANCE.SLOT, stakeAddrBalance.getSlot())
+                                .set(STAKE_ADDRESS_BALANCE.QUANTITY, stakeAddrBalance.getQuantity())
+                                .set(STAKE_ADDRESS_BALANCE.BLOCK, stakeAddrBalance.getBlockNumber())
+                                .set(STAKE_ADDRESS_BALANCE.BLOCK_TIME, stakeAddrBalance.getBlockTime())
+                                .set(STAKE_ADDRESS_BALANCE.EPOCH, stakeAddrBalance.getEpoch())
+                                .set(STAKE_ADDRESS_BALANCE.UPDATE_DATETIME, localDateTime)
+                                .onDuplicateKeyUpdate()
+                                .set(STAKE_ADDRESS_BALANCE.QUANTITY, stakeAddrBalance.getQuantity())
+                                .set(STAKE_ADDRESS_BALANCE.BLOCK, stakeAddrBalance.getBlockNumber())
+                                .set(STAKE_ADDRESS_BALANCE.BLOCK_TIME, stakeAddrBalance.getBlockTime())
+                                .set(STAKE_ADDRESS_BALANCE.EPOCH, stakeAddrBalance.getEpoch())
+                                .set(STAKE_ADDRESS_BALANCE.UPDATE_DATETIME, localDateTime)
+                        ).toList();
+
+        dsl.batch(inserts).execute();
     }
 
     @Transactional
@@ -277,6 +251,16 @@ public class AccountBalanceStorageImpl implements AccountBalanceStorage {
         //Find the latest stake address balance before the slot and delete all address balances before that
         return stakeBalanceRepository.findTopByAddressAndSlotIsLessThanEqualOrderBySlotDesc(address, slot)
                 .map(addressBalanceEntity -> stakeBalanceRepository.deleteAllBeforeSlot(address, addressBalanceEntity.getSlot() - 1)).orElse(0);
+    }
+
+    @Override
+    public int deleteStakeBalanceBeforeSlotExceptTop(List<String> addresses, long slot) {
+        //Add to cache and delete once the cache size reaches a threshold
+        addresses.forEach(address -> {
+            stakeBalanceKeysToDeleteCache.put(address, slot);
+        });
+
+        return 0;
     }
 
     @Transactional
@@ -295,10 +279,57 @@ public class AccountBalanceStorageImpl implements AccountBalanceStorage {
                 .toList();
     }
 
+    @EventListener
+    @Transactional
+    public void handleBalanceDeleteOnCommit(CommitEvent commitEvent) {
+        //Delete address balances if cache size reaches a threshold
+        if (commitEvent.getMetadata().isSyncMode()) {
+            performBalanceDelete(true); //Ignore threshold check. Delete always
+        } else {
+            performBalanceDelete(false);
+        }
+    }
+
+    private long performBalanceDelete(boolean ignoreThresholdCheck) {
+        long t1 = System.currentTimeMillis();
+
+        if (!ignoreThresholdCheck && addressBalanceKeysToDeleteCache.size() < accountStoreProperties.getBalanceCleanupBatchThreshold())
+            return 0;
+
+        log.info("<< Start: Deleting balances : cache size {} >>",addressBalanceKeysToDeleteCache.size() + stakeBalanceKeysToDeleteCache.size());
+
+        var addressBalanceDeleteQueries = addressBalanceKeysToDeleteCache.entrySet().stream()
+                .map(pairLongEntry -> dsl.deleteFrom(ADDRESS_BALANCE)
+                        .where(ADDRESS_BALANCE.ADDRESS.eq(pairLongEntry.getKey().getFirst()))
+                        .and(ADDRESS_BALANCE.UNIT.eq(pairLongEntry.getKey().getSecond()))
+                        .and(ADDRESS_BALANCE.SLOT.lt(pairLongEntry.getValue())));
+
+        var stakeBalanceDeleteQueries = stakeBalanceKeysToDeleteCache.entrySet().stream()
+                .map(entry -> dsl.deleteFrom(STAKE_ADDRESS_BALANCE)
+                        .where(
+                                STAKE_ADDRESS_BALANCE.ADDRESS.eq(entry.getKey())
+                                        .and(STAKE_ADDRESS_BALANCE.SLOT.lt(entry.getValue()))
+                        ));
+
+        var allDeleteQueries = Stream.concat(addressBalanceDeleteQueries, stakeBalanceDeleteQueries).toList();
+
+        int[] deletedRows = dsl.batch(allDeleteQueries).execute();
+
+        int totalCount = Arrays.stream(deletedRows).sum();
+
+        long t2 = System.currentTimeMillis();
+        log.info("<< End: Deleted balance rows: {}, Time taken: {} ms >>", totalCount, (t2 - t1));
+
+        addressBalanceKeysToDeleteCache.clear();
+        stakeBalanceKeysToDeleteCache.clear();
+
+        return totalCount;
+    }
+
     private int getPartitionSize(int totalSize) {
         int partitionSize = totalSize;
-        if (totalSize > accountStoreProperties.getWriteThreadDefaultBatchSize()) {
-            partitionSize = totalSize / accountStoreProperties.getWriteThreadCount();
+        if (totalSize > storeProperties.getWriteThreadDefaultBatchSize()) {
+            partitionSize = totalSize / storeProperties.getWriteThreadCount();
             log.info("\tPartition size : {}", partitionSize);
         } else {
             log.info("\tPartition size : {}", partitionSize);

@@ -42,7 +42,7 @@ public class AccountController {
 
     @GetMapping("/addresses/{address}/balance")
     @Operation(description = "Get current balance at an address")
-    public Optional<AddressBalanceDto> getAddressBalance(String address) {
+    public Optional<AddressBalanceDto> getAddressBalance(@PathVariable @NonNull String address) {
         if (!accountStoreProperties.isBalanceAggregationEnabled())
             throw new UnsupportedOperationException("Address balance aggregation is not enabled");
 
@@ -61,7 +61,7 @@ public class AccountController {
 
     @GetMapping("/accounts/{stakeAddress}/balance")
     @Operation(description = "Get current balance at a stake address")
-    public Optional<StakeAddressBalance> getStakeAddressBalance(String stakeAddress) {
+    public Optional<StakeAddressBalance> getStakeAddressBalance(@PathVariable @NonNull String stakeAddress) {
         if (!accountStoreProperties.isBalanceAggregationEnabled())
             throw new UnsupportedOperationException("Address balance aggregation is not enabled");
 
@@ -71,7 +71,7 @@ public class AccountController {
 
     @GetMapping("/addresses/{address}/{unit}/{timeInSec}/balance")
     @Operation(description = "Get current balance at an address at a specific time. This is an experimental feature.")
-    public Optional<AddressBalanceDto> getAddressBalanceAtTime(String address, String unit, long timeInSec) {
+    public Optional<AddressBalanceDto> getAddressBalanceAtTime(@PathVariable String address,@PathVariable String unit,@PathVariable long timeInSec) {
         if (!accountStoreProperties.isBalanceAggregationEnabled())
             throw new UnsupportedOperationException("Address balance aggregation is not enabled");
 
@@ -84,8 +84,8 @@ public class AccountController {
 
     @GetMapping("/accounts/{stakeAddress}/{timeInSec}/balance")
     @Operation(description = "Get current balance at a stake address at a specific time. This is an experimental feature.")
-    public StakeAddressBalance getStakeAddressBalanceAtTime(String stakeAddress,
-                                                            long timeInSec) {
+    public StakeAddressBalance getStakeAddressBalanceAtTime(@PathVariable @NonNull String stakeAddress,
+                                                            @PathVariable long timeInSec) {
         if (!accountStoreProperties.isBalanceAggregationEnabled())
             throw new UnsupportedOperationException("Address balance aggregation is not enabled");
 
@@ -155,19 +155,15 @@ public class AccountController {
         var amts = addresssBalances.stream()
                 .map(addressBalance -> Amt.builder()
                         .unit(addressBalance.getUnit())
-                        .assetName(addressBalance.getAssetName())
-                        .policyId(addressBalance.getPolicy())
                         .quantity(addressBalance.getQuantity())
                         .build()).toList();
 
         Long lastTxBlock = 0L;
-        String lastTxBlockHash = null;
         Long lastTxSlot = 0L;
         Long lastTxBlockTime = 0L;
         for (AddressBalance addressBalance: addresssBalances) {
             if (addressBalance.getBlockNumber() > lastTxBlock) {
                 lastTxBlock = addressBalance.getBlockNumber();
-                lastTxBlockHash = addressBalance.getBlockHash();
                 lastTxSlot = addressBalance.getSlot();
                 lastTxBlockTime = addressBalance.getBlockTime();
             }
@@ -175,11 +171,8 @@ public class AccountController {
 
         var addressBalanceDto = new AddressBalanceDto();
         addressBalanceDto.setAddress(addresssBalances.get(0).getAddress());
-        addressBalanceDto.setPaymentCredential(addresssBalances.get(0).getPaymentCredential());
-        addressBalanceDto.setStakeAddress(addresssBalances.get(0).getStakeAddress());
         addressBalanceDto.setAmounts(amts);
         addressBalanceDto.setBlockNumber(lastTxBlock);
-        addressBalanceDto.setBlockHash(lastTxBlockHash);
         addressBalanceDto.setSlot(lastTxSlot);
         addressBalanceDto.setBlockTime(lastTxBlockTime);
 
@@ -197,18 +190,13 @@ public class AccountController {
 
         var amts =  Amt.builder()
                         .unit(addressBalance.getUnit())
-                        .assetName(addressBalance.getAssetName())
-                        .policyId(addressBalance.getPolicy())
                         .quantity(addressBalance.getQuantity())
                         .build();
 
         AddressBalanceDto addressBalanceDto = new AddressBalanceDto();
         addressBalanceDto.setAddress(addressBalance.getAddress());
-        addressBalanceDto.setPaymentCredential(addressBalance.getPaymentCredential());
-        addressBalanceDto.setStakeAddress(addressBalance.getStakeAddress());
         addressBalanceDto.setAmounts(List.of(amts));
         addressBalanceDto.setBlockNumber(addressBalance.getBlockNumber());
-        addressBalanceDto.setBlockHash(addressBalance.getBlockHash());
         addressBalanceDto.setSlot(addressBalance.getSlot());
         addressBalanceDto.setBlockTime(addressBalance.getBlockTime());
 

@@ -2,8 +2,8 @@
 drop table if exists address_utxo;
 create table address_utxo
 (
-    output_index          smallint      not null,
     tx_hash               varchar(64) not null,
+    output_index          smallint    not null,
     slot                  bigint,
     block_hash            varchar(64),
     epoch                 integer,
@@ -68,3 +68,20 @@ CREATE INDEX idx_tx_input_slot
 CREATE INDEX idx_tx_input_block
     ON tx_input(spent_at_block);
 
+-- address
+
+drop table if exists address;
+create table address
+(
+    id                 bigserial,
+    address            varchar(500) unique not null,
+    addr_full          text,
+    payment_credential varchar(56),
+    stake_address      varchar(255),
+    stake_credential   varchar(56),
+    update_datetime    timestamp,
+    primary key (id)
+);
+
+CREATE INDEX idx_address_stake_address
+    ON address (stake_address);

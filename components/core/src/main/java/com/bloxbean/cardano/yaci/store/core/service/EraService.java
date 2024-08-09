@@ -8,12 +8,16 @@ import com.bloxbean.cardano.yaci.store.core.configuration.GenesisConfig;
 import com.bloxbean.cardano.yaci.store.core.domain.CardanoEra;
 import com.bloxbean.cardano.yaci.store.core.storage.api.CursorStorage;
 import com.bloxbean.cardano.yaci.store.core.storage.api.EraStorage;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.util.Optional;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class EraService {
 
     private final EraStorage eraStorage;
@@ -21,6 +25,7 @@ public class EraService {
     private final EpochConfig epochConfig;
     private final GenesisConfig genesisConfig;
     private final StoreProperties storeProperties;
+    private final TipFinderService tipFinderService;
 
     private Era prevEra;
     private long shelleyStartSlot = -1;
@@ -28,15 +33,6 @@ public class EraService {
     //Don't use these variable directly. Use firstShelleySlot(), shelleyEraStartTime() method
     private long _firstShelleySlot;
     private long _shelleyStartTime;
-
-    @Autowired
-    public EraService(EraStorage eraStorage, CursorStorage cursorStorage, EpochConfig epochConfig, GenesisConfig genesisConfig, StoreProperties storeProperties) {
-        this.eraStorage = eraStorage;
-        this.cursorStorage = cursorStorage;
-        this.epochConfig = epochConfig;
-        this.genesisConfig = genesisConfig;
-        this.storeProperties = storeProperties;
-    }
 
     public boolean checkIfNewEra(Era era, BlockHeader blockHeader) {
         if (prevEra == null) { //If prevEra is null, then try to find era of prevBlock
@@ -126,6 +122,22 @@ public class EraService {
         } else {
             long slotsFromShelleyStart = slot - firstShelleySlot();
             return (shelleyEraStartTime() + slotsFromShelleyStart * (long) genesisConfig.slotDuration(Era.Shelley));
+        }
+    }
+
+    /**
+     * Get current epoch number directly from the tip
+     * This method can only be used when the node is in shelley or post shelley era
+     * @return current epoch number
+     */
+    public Optional<Integer> getCurrentEpoch() {
+        var tip = tipFinderService.getTip().block(Duration.ofSeconds(5));
+
+        if (tip != null) {
+            int epoch = epochConfig.epochFromSlot(firstShelleySlot(), Era.Shelley, tip.getPoint().getSlot());
+            return Optional.of(epoch);
+        } else {
+            return Optional.empty();
         }
     }
 
