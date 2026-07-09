@@ -789,6 +789,12 @@ export default function LandingPage() {
           opacity: 0.9;
         }
 
+        .project-icon img {
+          width: 3rem;
+          height: 3rem;
+          display: block;
+        }
+
         .project-info {
           flex: 1;
         }
@@ -1997,6 +2003,23 @@ export default function LandingPage() {
                   </p>
                   <div className="project-links">
                     <a href="https://uplc.link/" target="_blank" className="project-link">
+                      Visit Site
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <div className="project-card">
+                <div className="project-icon">
+                  <img src="/images/nexus.svg" alt="Nexus" />
+                </div>
+                <div className="project-info">
+                  <h3 className="project-name">Nexus</h3>
+                  <p className="project-description">
+                    Multi-chain blockchain data API by A.D. Labs, using Yaci Store as its primary Cardano data provider for address, transaction, asset, pool, and DRep endpoints.
+                  </p>
+                  <div className="project-links">
+                    <a href="https://market.gerowallet.io" target="_blank" className="project-link">
                       Visit Site
                     </a>
                   </div>
